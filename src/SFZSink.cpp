@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <vector>
 
 #include <Arduino.h>
@@ -231,6 +232,14 @@ static bool parseNotename(const String& str, uint32_t* out) {
     return false;
 }
 
+static uint32_t generateRandQ16() {
+    static uint32_t state = 2463534242U;
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state & 0x0000FFFFU;
+}
+
 static SFZSink::Region buildRegion(const SFZSink::OpcodeContainer& container) {
     const int kSampleSize = (kPbBitDepth / 8) * kPbChannelCount;
 
@@ -255,12 +264,17 @@ static SFZSink::Region buildRegion(const SFZSink::OpcodeContainer& container) {
 
     size_t pcm_samples = region.pcm_size / kSampleSize;
 
+    region.group_id = container.group_id;
     region.lochan = container.opcode[SFZSink::kOpcodeLochan];
     region.hichan = container.opcode[SFZSink::kOpcodeHichan];
     region.lokey = container.opcode[SFZSink::kOpcodeLokey];
     region.hikey = container.opcode[SFZSink::kOpcodeHikey];
     region.lovel = container.opcode[SFZSink::kOpcodeLovel];
     region.hivel = container.opcode[SFZSink::kOpcodeHivel];
+    region.lorand = container.opcode[SFZSink::kOpcodeLorand];
+    region.hirand = container.opcode[SFZSink::kOpcodeHirand];
+    region.seq_length = container.opcode[SFZSink::kOpcodeSeqLength];
+    region.seq_position = container.opcode[SFZSink::kOpcodeSeqPosition];
     region.sw_last = container.opcode[SFZSink::kOpcodeSwLast];
     region.loprog = container.opcode[SFZSink::kOpcodeLoProg];
     region.hiprog = container.opcode[SFZSink::kOpcodeHiProg];
@@ -324,7 +338,8 @@ SFZSink::SFZSink(const String& sfz_path)
       default_path_(""),
       sw_lokey_(NOTE_NUMBER_MIN),
       sw_hikey_(NOTE_NUMBER_MAX),
-      sw_last_(INVALID_NOTE_NUMBER) {
+    sw_last_(INVALID_NOTE_NUMBER),
+    seq_counters_() {
 }
 
 SFZSink::~SFZSink() {
@@ -475,6 +490,8 @@ bool SFZSink::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) {
     }
 
     Region* region = nullptr;
+    uint32_t rand_q16 = generateRandQ16();
+    std::vector<uint32_t> sequence_groups;
     for (auto& e : regions_) {
         if (e.sw_last != INVALID_NOTE_NUMBER && e.sw_last != sw_last_) {
             continue;
@@ -488,6 +505,9 @@ bool SFZSink::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) {
         if (velocity < e.lovel || e.hivel < velocity) {
             continue;
         }
+        if (rand_q16 < e.lorand || e.hirand <= rand_q16) {
+            continue;
+        }
         if (bank_.msb < e.locc0 || e.hicc0 < bank_.msb) {
             continue;
         }
@@ -497,9 +517,25 @@ bool SFZSink::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) {
         if (prog_num_ < e.loprog || e.hiprog < prog_num_) {
             continue;
         }
+
+        if (e.seq_length > 1) {
+            if (std::find(sequence_groups.begin(), sequence_groups.end(), e.group_id) == sequence_groups.end()) {
+                sequence_groups.push_back(e.group_id);
+            }
+        }
+
+        if (e.seq_position != getSeqIndex(e.group_id, e.seq_length)) {
+            continue;
+        }
+
         region = &e;
         break;
     }
+
+    for (auto group_id : sequence_groups) {
+        stepSequence(group_id);
+    }
+
     if (region == nullptr) {
         error_printf("[%s::%s] no match region for note=%d,channel=%d\n", kClassName, __func__, note, channel);
         return false;
@@ -575,7 +611,7 @@ void SFZSink::startSfz() {
         global_.opcode[kOpcodeLovel] = 0;
         global_.opcode[kOpcodeHivel] = 127;
         global_.opcode[kOpcodeLorand] = 0;  // TODO: set 0 by Qm.n (Q notation)
-        global_.opcode[kOpcodeHirand] = 1;  // TODO: set 1 by Qm.n (Q notation)
+        global_.opcode[kOpcodeHirand] = 0x00010000;  // Q16: 1.0 (upper bound, exclusive)
         global_.opcode[kOpcodeSeqLength] = 1;
         global_.opcode[kOpcodeSeqPosition] = 1;
         global_.opcode[kOpcodeSwLokey] = NOTE_NUMBER_MIN;
@@ -604,9 +640,27 @@ void SFZSink::startSfz() {
     sw_lokey_ = NOTE_NUMBER_MIN;
     sw_hikey_ = NOTE_NUMBER_MAX;
     sw_last_ = INVALID_NOTE_NUMBER;
+    seq_counters_.clear();
     header_ = kInvalidHeader;
     group_id_ = 0;
     regions_in_group_ = -1;
+}
+
+uint32_t SFZSink::getSeqIndex(uint32_t group_id, uint32_t seq_length) {
+    if (seq_length == 0) {
+        return 1;
+    }
+    if (seq_counters_.size() <= group_id) {
+        seq_counters_.resize(group_id + 1, 0);
+    }
+    return (seq_counters_[group_id] % seq_length) + 1;
+}
+
+void SFZSink::stepSequence(uint32_t group_id) {
+    if (seq_counters_.size() <= group_id) {
+        seq_counters_.resize(group_id + 1, 0);
+    }
+    seq_counters_[group_id]++;
 }
 
 void SFZSink::endSfz() {
@@ -676,10 +730,10 @@ void SFZSink::opcode(const String& opcode, const String& value) {
         {"key",          kOpcodeLokey,       NOTE_NUMBER_MIN, NOTE_NUMBER_MAX, parseNotename},
         {"lovel",        kOpcodeLovel,       0,               127,             parseUint32  },
         {"hivel",        kOpcodeHivel,       0,               127,             parseUint32  },
-        {"lorand",       kOpcodeLorand,      0x00000000,      0x00010000,      parseQ16     }, //< not supported
-        {"hirand",       kOpcodeHirand,      0x00000000,      0x00010000,      parseQ16     }, //< not supported
-        {"seq_length",   kOpcodeSeqLength,   1,               100,             parseUint32  }, //< not supported
-        {"seq_position", kOpcodeSeqPosition, 1,               100,             parseUint32  }, //< not supported
+        {"lorand",       kOpcodeLorand,      0x00000000,      0x00010000,      parseQ16     },
+        {"hirand",       kOpcodeHirand,      0x00000000,      0x00010000,      parseQ16     },
+        {"seq_length",   kOpcodeSeqLength,   1,               100,             parseUint32  },
+        {"seq_position", kOpcodeSeqPosition, 1,               100,             parseUint32  },
         {"group",        kOpcodeGroup,       0,               UINT32_MAX,      parseUint32  }, //< not supported
         {"off_by",       kOpcodeOffBy,       0,               UINT32_MAX,      parseUint32  }, //< not supported
         {"offset",       kOpcodeOffset,      0,               UINT32_MAX,      parseUint32  },

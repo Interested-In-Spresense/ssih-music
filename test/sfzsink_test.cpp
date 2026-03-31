@@ -1962,3 +1962,53 @@ TEST_F(SfzTest, sw_default11) {
     sfz_test.begin();
     EXPECT_EQ(sfz_test.getNumberOfRegions(), 0);
 }
+
+TEST_F(SfzTest, lorand_hirand_parse_q16) {
+    create_file("testdata/SFZSink/lorand_hirand_parse_q16.sfz",
+                "<region> sample=test.raw lorand=0.25 hirand=0.75\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/lorand_hirand_parse_q16.sfz");
+    sfz_test.begin();
+
+    EXPECT_EQ(sfz_test.getNumberOfRegions(), 1);
+    if (sfz_test.getNumberOfRegions() >= 1) {
+        EXPECT_EQ(sfz_test.getRegion(0)->lorand, 0x00004000U);
+        EXPECT_EQ(sfz_test.getRegion(0)->hirand, 0x0000C000U);
+    }
+}
+
+TEST_F(SfzTest, lorand_hirand_runtime_filter) {
+    create_file("testdata/SFZSink/lorand_hirand_runtime_filter.sfz",
+                "<region> sample=test.raw key=60 lorand=1 hirand=1\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/lorand_hirand_runtime_filter.sfz");
+    sfz_test.begin();
+
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
+TEST_F(SfzTest, seq_length_position_parse) {
+    create_file("testdata/SFZSink/seq_length_position_parse.sfz",
+                "<region> sample=test.raw key=60 seq_length=3 seq_position=2\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/seq_length_position_parse.sfz");
+    sfz_test.begin();
+
+    EXPECT_EQ(sfz_test.getNumberOfRegions(), 1);
+    if (sfz_test.getNumberOfRegions() >= 1) {
+        EXPECT_EQ(sfz_test.getRegion(0)->seq_length, 3U);
+        EXPECT_EQ(sfz_test.getRegion(0)->seq_position, 2U);
+    }
+}
+
+TEST_F(SfzTest, seq_length_position_runtime_filter) {
+    create_file("testdata/SFZSink/seq_length_position_runtime_filter.sfz",
+                "<region> sample=test.raw key=60 seq_length=3 seq_position=2\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/seq_length_position_runtime_filter.sfz");
+    sfz_test.begin();
+
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));  // step1: seq=1
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));   // step2: seq=2
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));  // step3: seq=3
+}

@@ -10,6 +10,8 @@
 #ifndef SFZ_SINK_H_
 #define SFZ_SINK_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include <Arduino.h>
@@ -72,12 +74,17 @@ public:
      */
     struct Region {
         String sample;
+        uint32_t group_id;
         uint8_t lochan;
         uint8_t hichan;
         uint8_t lokey;
         uint8_t hikey;
         uint8_t lovel;
         uint8_t hivel;
+        uint32_t lorand;
+        uint32_t hirand;
+        uint32_t seq_length;
+        uint32_t seq_position;
         uint8_t loprog;
         uint8_t hiprog;
         uint8_t locc0;
@@ -201,10 +208,14 @@ private:
     uint8_t sw_lokey_;
     uint8_t sw_hikey_;
     uint8_t sw_last_;
+    std::vector<uint32_t> seq_counters_;
 
     PlaybackUnit* startPlayback(uint8_t note, uint8_t velocity, uint8_t channel, Region* region);
     void continuePlayback(PlaybackUnit* unit, int frames);
     void stopPlayback(PlaybackUnit* unit);
+
+    uint32_t getSeqIndex(uint32_t group_id, uint32_t seq_length);
+    void stepSequence(uint32_t group_id);
 };
 
 #endif  // SFZ_SINK_H_
