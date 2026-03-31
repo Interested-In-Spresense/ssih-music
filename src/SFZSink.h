@@ -117,6 +117,7 @@ public:
 
     struct PlaybackUnit {
         uint8_t note;
+        uint8_t velocity;
         uint8_t channel;
         int render_ch;
         Region* region;

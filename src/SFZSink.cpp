@@ -809,7 +809,7 @@ void SFZSink::opcode(const String& opcode, const String& value) {
     }
 }
 
-SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t /*velocity*/, uint8_t channel, Region* region) {
+SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t velocity, uint8_t channel, Region* region) {
     trace_printf("[%s::%s] (%d,%d,%d,%p))\n", kClassName, __func__, note, velocity, channel, region);
     PlaybackUnit* unit = nullptr;
     if (region == nullptr) {
@@ -832,6 +832,7 @@ SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t /*velocity*/
     if (unit->file) {
         unit->file.seek(region->offset);
         unit->note = note;
+        unit->velocity = velocity;
         unit->channel = channel;
         int render_channel = renderer_.allocateChannel();
         unit->render_ch = (render_channel < 0) ? kUnallocatedChannel : render_channel;
@@ -890,6 +891,17 @@ void SFZSink::continuePlayback(PlaybackUnit* unit, int frames) {
         read_size = (read_size < kPbBlockSize) ? read_size : kPbBlockSize;
         uint8_t buffer[read_size];
         unit->file.read(buffer, read_size);
+
+        // Apply velocity-based amplitude coefficient to PCM data
+        if (unit->velocity > 0 && read_size > 0) {
+            for (size_t i = 0; i < read_size; i += 2) {
+                int16_t sample = (buffer[i+1] << 8) | buffer[i];
+                sample = (sample * (uint32_t)unit->velocity) / 127;
+                buffer[i] = sample & 0xFF;
+                buffer[i+1] = (sample >> 8) & 0xFF;
+            }
+        }
+
         renderer_.write(unit->render_ch, buffer, read_size);
     }
 }

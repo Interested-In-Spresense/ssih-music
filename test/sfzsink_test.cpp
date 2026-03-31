@@ -2012,3 +2012,36 @@ TEST_F(SfzTest, seq_length_position_runtime_filter) {
     EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));   // step2: seq=2
     EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));  // step3: seq=3
 }
+
+TEST_F(SfzTest, velocity_max) {
+    create_file("testdata/SFZSink/velocity_max.sfz",
+                "<region> sample=test.raw key=60 lovel=0 hivel=127\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/velocity_max.sfz");
+    sfz_test.begin();
+
+    // velocity=127 should match region and play
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 127, 1));
+}
+
+TEST_F(SfzTest, velocity_mid) {
+    create_file("testdata/SFZSink/velocity_mid.sfz",
+                "<region> sample=test.raw key=60 lovel=0 hivel=127\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/velocity_mid.sfz");
+    sfz_test.begin();
+
+    // velocity=64 should match region and play
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 64, 1));
+}
+
+TEST_F(SfzTest, velocity_min) {
+    create_file("testdata/SFZSink/velocity_min.sfz",
+                "<region> sample=test.raw key=60 lovel=0 hivel=127\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/velocity_min.sfz");
+    sfz_test.begin();
+
+    // velocity=1 should match region and play
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 1, 1));
+}
