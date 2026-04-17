@@ -223,6 +223,68 @@ static bool parseBendFilter(const String& str, uint32_t* out) {
     return true;
 }
 
+static double updateEnvelope(SFZSink::PlaybackUnit* unit) {
+    if (unit == nullptr || unit->region == nullptr) {
+        return 0.0;
+    }
+
+    const double kFramesPerMs = (double)kPbSampleFrq / 1000.0;
+    const double sustain_level = (double)unit->region->ampeg_sustain / 100.0;
+
+    switch (unit->env_stage) {
+        case SFZSink::PlaybackUnit::kEnvAttack: {
+            if (unit->region->ampeg_attack == 0) {
+                unit->env_level = 1.0;
+                unit->env_stage = SFZSink::PlaybackUnit::kEnvDecay;
+            } else {
+                double attack_samples = (double)unit->region->ampeg_attack * kFramesPerMs;
+                unit->env_level += 1.0 / attack_samples;
+                if (unit->env_level >= 1.0) {
+                    unit->env_level = 1.0;
+                    unit->env_stage = SFZSink::PlaybackUnit::kEnvDecay;
+                }
+            }
+            break;
+        }
+        case SFZSink::PlaybackUnit::kEnvDecay: {
+            if (unit->region->ampeg_decay == 0) {
+                unit->env_level = sustain_level;
+                unit->env_stage = SFZSink::PlaybackUnit::kEnvSustain;
+            } else {
+                double decay_samples = (double)unit->region->ampeg_decay * kFramesPerMs;
+                unit->env_level -= (1.0 - sustain_level) / decay_samples;
+                if (unit->env_level <= sustain_level) {
+                    unit->env_level = sustain_level;
+                    unit->env_stage = SFZSink::PlaybackUnit::kEnvSustain;
+                }
+            }
+            break;
+        }
+        case SFZSink::PlaybackUnit::kEnvSustain:
+            unit->env_level = sustain_level;
+            break;
+        case SFZSink::PlaybackUnit::kEnvRelease: {
+            if (unit->region->ampeg_release == 0) {
+                unit->env_level = 0.0;
+                unit->env_stage = SFZSink::PlaybackUnit::kEnvOff;
+            } else {
+                double release_samples = (double)unit->region->ampeg_release * kFramesPerMs;
+                unit->env_level -= unit->release_start_level / release_samples;
+                if (unit->env_level <= 0.0) {
+                    unit->env_level = 0.0;
+                    unit->env_stage = SFZSink::PlaybackUnit::kEnvOff;
+                }
+            }
+            break;
+        }
+        case SFZSink::PlaybackUnit::kEnvOff:
+            unit->env_level = 0.0;
+            break;
+    }
+
+    return unit->env_level;
+}
+
 static bool parseNotename(const String& str, uint32_t* out) {
     const unsigned char kBasenote[] = {69, 71, 60, 62, 64, 65, 67};
 
@@ -312,6 +374,10 @@ static SFZSink::Region buildRegion(const SFZSink::OpcodeContainer& container) {
     region.bend_down = (int32_t)container.opcode[SFZSink::kOpcodeBendDown];
     region.lobend = (int32_t)container.opcode[SFZSink::kOpcodeLoBend];
     region.hibend = (int32_t)container.opcode[SFZSink::kOpcodeHiBend];
+    region.ampeg_attack = container.opcode[SFZSink::kOpcodeAmpegAttack];
+    region.ampeg_decay = container.opcode[SFZSink::kOpcodeAmpegDecay];
+    region.ampeg_sustain = container.opcode[SFZSink::kOpcodeAmpegSustain];
+    region.ampeg_release = container.opcode[SFZSink::kOpcodeAmpegRelease];
     size_t offset_samples = (pcm_samples < container.opcode[SFZSink::kOpcodeOffset]) ? pcm_samples : container.opcode[SFZSink::kOpcodeOffset];
     region.offset = region.pcm_offset + offset_samples * kSampleSize;
     if (pcm_samples > 0) {
@@ -495,7 +561,12 @@ bool SFZSink::sendNoteOff(uint8_t note, uint8_t /*velocity*/, uint8_t channel) {
             continue;
         }
         if (e.note == note) {
-            stopPlayback(&e);
+            if (e.region->ampeg_release == 0) {
+                stopPlayback(&e);
+            } else {
+                e.release_start_level = e.env_level;
+                e.env_stage = PlaybackUnit::kEnvRelease;
+            }
             break;
         }
     }
@@ -688,6 +759,10 @@ void SFZSink::startSfz() {
         global_.opcode[kOpcodeBendDown] = (uint32_t)-200;
         global_.opcode[kOpcodeLoBend] = (uint32_t)-8192;
         global_.opcode[kOpcodeHiBend] = 8192;
+        global_.opcode[kOpcodeAmpegAttack] = 0;
+        global_.opcode[kOpcodeAmpegDecay] = 0;
+        global_.opcode[kOpcodeAmpegSustain] = 100;
+        global_.opcode[kOpcodeAmpegRelease] = 0;
     }
     group_ = global_;
     region_ = group_;
@@ -818,7 +893,11 @@ void SFZSink::opcode(const String& opcode, const String& value) {
         {"bend_up",      kOpcodeBendUp,      0,               UINT32_MAX,      parseBendRange},
         {"bend_down",    kOpcodeBendDown,    0,               UINT32_MAX,      parseBendRange},
         {"lobend",       kOpcodeLoBend,      0,               UINT32_MAX,      parseBendFilter},
-        {"hibend",       kOpcodeHiBend,      0,               UINT32_MAX,      parseBendFilter}
+        {"hibend",       kOpcodeHiBend,      0,               UINT32_MAX,      parseBendFilter},
+        {"ampeg_attack",  kOpcodeAmpegAttack, 0,               UINT32_MAX,      parseUint32  },
+        {"ampeg_decay",   kOpcodeAmpegDecay,  0,               UINT32_MAX,      parseUint32  },
+        {"ampeg_sustain", kOpcodeAmpegSustain,0,               100,             parseUint32  },
+        {"ampeg_release", kOpcodeAmpegRelease,0,               UINT32_MAX,      parseUint32  }
     };
     // clang-format on
 
@@ -903,6 +982,9 @@ SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t velocity, ui
         unit->region = region;
         unit->loop = 0;
         unit->source_frame = (double)(region->offset / kFrameBytes);
+        unit->env_stage = PlaybackUnit::kEnvAttack;
+        unit->env_level = 0.0;
+        unit->release_start_level = 0.0;
 
         if (unit->render_ch == kUnallocatedChannel) {
             error_printf("[%s::%s] cannot allocate channel\n", kClassName, __func__);
@@ -993,7 +1075,14 @@ void SFZSink::continuePlayback(PlaybackUnit* unit, int frames) {
             unit->file.seek(base_frame * kFrameBytes);
             unit->file.read(src_buffer.data(), src_buffer.size());
 
+            size_t produced_frames = 0;
             for (size_t frame_index = 0; frame_index < chunk_frames; frame_index++) {
+                double env_level = updateEnvelope(unit);
+                if (unit->env_stage == PlaybackUnit::kEnvOff) {
+                    stopPlayback(unit);
+                    break;
+                }
+
                 double pos = base_frac + ((double)frame_index * ratio);
                 size_t idx0 = (size_t)pos;
                 double frac = pos - (double)idx0;
@@ -1017,16 +1106,23 @@ void SFZSink::continuePlayback(PlaybackUnit* unit, int frames) {
 
                 left = (left * (uint32_t)unit->velocity) / 127;
                 right = (right * (uint32_t)unit->velocity) / 127;
+                left = (int32_t)((double)left * env_level);
+                right = (int32_t)((double)right * env_level);
 
                 size_t dst = (out_frames + frame_index) * kFrameBytes;
                 buffer[dst + 0] = left & 0xFF;
                 buffer[dst + 1] = (left >> 8) & 0xFF;
                 buffer[dst + 2] = right & 0xFF;
                 buffer[dst + 3] = (right >> 8) & 0xFF;
+                produced_frames++;
             }
 
-            unit->source_frame += (double)chunk_frames * ratio;
-            out_frames += chunk_frames;
+            if (produced_frames == 0) {
+                break;
+            }
+
+            unit->source_frame += (double)produced_frames * ratio;
+            out_frames += produced_frames;
         }
 
         if (unit->render_ch < 0 || out_frames == 0) {

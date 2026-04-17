@@ -69,6 +69,10 @@ public:
         kOpcodeBendDown,
         kOpcodeLoBend,
         kOpcodeHiBend,
+        kOpcodeAmpegAttack,
+        kOpcodeAmpegDecay,
+        kOpcodeAmpegSustain,
+        kOpcodeAmpegRelease,
         kOpcodeMax
     };
     enum LoopMode { kInvalidLoopMode, kNoLoop, kOneShot, kLoopContinuous, kLoopSustain };
@@ -99,6 +103,10 @@ public:
         int32_t bend_down;
         int32_t lobend;
         int32_t hibend;
+        uint32_t ampeg_attack;
+        uint32_t ampeg_decay;
+        uint32_t ampeg_sustain;
+        uint32_t ampeg_release;
         uint8_t sw_last;
         uint32_t offset;
         uint32_t end;
@@ -124,6 +132,14 @@ public:
     };
 
     struct PlaybackUnit {
+        enum EnvelopeStage {
+            kEnvAttack,
+            kEnvDecay,
+            kEnvSustain,
+            kEnvRelease,
+            kEnvOff
+        };
+
         uint8_t note;
         uint8_t velocity;
         uint8_t channel;
@@ -132,6 +148,9 @@ public:
         File file;
         uint32_t loop;
         double source_frame;
+        EnvelopeStage env_stage;
+        double env_level;
+        double release_start_level;
     };
 
     struct CCParamStore {

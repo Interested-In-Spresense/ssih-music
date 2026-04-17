@@ -2086,6 +2086,32 @@ TEST_F(SfzTest, pitch_bend_midi_message_runtime_filter) {
     EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));
 }
 
+TEST_F(SfzTest, ampeg_parse) {
+    create_file("testdata/SFZSink/ampeg_parse.sfz",
+                "<region> sample=test.raw key=60 ampeg_attack=10 ampeg_decay=20 ampeg_sustain=70 ampeg_release=30\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/ampeg_parse.sfz");
+    sfz_test.begin();
+
+    EXPECT_EQ(sfz_test.getNumberOfRegions(), 1);
+    if (sfz_test.getNumberOfRegions() >= 1) {
+        EXPECT_EQ(sfz_test.getRegion(0)->ampeg_attack, 10U);
+        EXPECT_EQ(sfz_test.getRegion(0)->ampeg_decay, 20U);
+        EXPECT_EQ(sfz_test.getRegion(0)->ampeg_sustain, 70U);
+        EXPECT_EQ(sfz_test.getRegion(0)->ampeg_release, 30U);
+    }
+}
+
+TEST_F(SfzTest, ampeg_sustain_out_of_range) {
+    create_file("testdata/SFZSink/ampeg_sustain_out_of_range.sfz",
+                "<region> sample=test.raw key=60 ampeg_sustain=101\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/ampeg_sustain_out_of_range.sfz");
+    sfz_test.begin();
+
+    EXPECT_EQ(sfz_test.getNumberOfRegions(), 0);
+}
+
 TEST_F(SfzTest, velocity_max) {
     create_file("testdata/SFZSink/velocity_max.sfz",
                 "<region> sample=test.raw key=60 lovel=0 hivel=127\n"
