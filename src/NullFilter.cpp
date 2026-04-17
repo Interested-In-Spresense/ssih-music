@@ -57,6 +57,10 @@ bool NullFilter::sendProgramChange(uint8_t, uint8_t) {
     return false;
 }
 
+bool NullFilter::sendPitchBend(uint16_t, uint8_t) {
+    return false;
+}
+
 bool NullFilter::sendSongPositionPointer(uint16_t /*beats*/) {
     return true;
 }
@@ -90,6 +94,8 @@ bool NullFilter::sendMidiMessage(uint8_t* msg, size_t length) {
         return sendControlChange(msg[1], msg[2], (msg[0] & 0x0F) + 1);
     } else if ((msg[0] & 0xF0) == MIDI_MSG_PROGRAM_CHANGE && length >= MIDI_MSGLEN_PROGRAM_CHANGE) {
         return sendProgramChange(msg[1], (msg[0] & 0x0F) + 1);
+    } else if ((msg[0] & 0xF0) == MIDI_MSG_PITCH_BEND_CHANGE && length >= MIDI_MSGLEN_PITCH_BEND_CHANGE) {
+        return sendPitchBend(((msg[2] & 0x7F) << 7) | ((msg[1] & 0x7F) << 0), (msg[0] & 0x0F) + 1);
     } else if (msg[0] == MIDI_MSG_SONG_POSITION_POINTER && length >= MIDI_MSGLEN_SONG_POSITION_POINTER) {
         return sendSongPositionPointer(((msg[2] & 0x7F) << 7) | ((msg[1] & 0x7F) << 0));
     } else if (msg[0] == MIDI_MSG_SONG_SELECT && length >= MIDI_MSGLEN_SONG_SELECT) {

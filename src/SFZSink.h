@@ -65,6 +65,10 @@ public:
         kOpcodeHiCC0,
         kOpcodeLoCC32,
         kOpcodeHiCC32,
+        kOpcodeBendUp,
+        kOpcodeBendDown,
+        kOpcodeLoBend,
+        kOpcodeHiBend,
         kOpcodeMax
     };
     enum LoopMode { kInvalidLoopMode, kNoLoop, kOneShot, kLoopContinuous, kLoopSustain };
@@ -91,6 +95,10 @@ public:
         uint8_t hicc0;
         uint8_t locc32;
         uint8_t hicc32;
+        int32_t bend_up;
+        int32_t bend_down;
+        int32_t lobend;
+        int32_t hibend;
         uint8_t sw_last;
         uint32_t offset;
         uint32_t end;
@@ -123,6 +131,7 @@ public:
         Region* region;
         File file;
         uint32_t loop;
+        double source_frame;
     };
 
     struct CCParamStore {
@@ -149,6 +158,7 @@ public:
     bool sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) override;
     bool sendControlChange(uint8_t ctrl_num, uint8_t value, uint8_t channel) override;
     bool sendProgramChange(uint8_t prog_num, uint8_t channel) override;
+    bool sendPitchBend(uint16_t value, uint8_t channel) override;
 
     /**
      * @brief @~japanese region数を取得します。
@@ -209,6 +219,7 @@ private:
     uint8_t sw_lokey_;
     uint8_t sw_hikey_;
     uint8_t sw_last_;
+    uint16_t pitch_bend_[16];
     std::vector<uint32_t> seq_counters_;
 
     PlaybackUnit* startPlayback(uint8_t note, uint8_t velocity, uint8_t channel, Region* region);

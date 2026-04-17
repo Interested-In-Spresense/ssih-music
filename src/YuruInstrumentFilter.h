@@ -151,6 +151,15 @@ public:
     virtual bool sendProgramChange(uint8_t prog_num, uint8_t channel) = 0;
 
     /**
+     * @brief Send "Pitch Bend Change" event
+     * @param[in] value pitch bend value (0 to 16383, center=8192)
+     * @param[in] channel channel number (1 to 16)
+     * @retval true Success
+     * @retval false Fail
+     */
+    virtual bool sendPitchBend(uint16_t value, uint8_t channel) = 0;
+
+    /**
      * @brief Send "Song Position Pointer"
      * @param[in] beats MIDI beats (1 MIDI beat = 6 MIDI clocks)
      * @retval true Success
@@ -224,6 +233,7 @@ public:
     bool sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) override;
     bool sendControlChange(uint8_t ctrl_num, uint8_t value, uint8_t channel) override;
     bool sendProgramChange(uint8_t prog_num, uint8_t channel) override;
+    bool sendPitchBend(uint16_t value, uint8_t channel) override;
 
     /**
      * @brief send Song Position Pointer
@@ -330,6 +340,7 @@ public:
     bool sendControlChange(uint8_t ctrl_num, uint8_t value, uint8_t channel) override;
     bool sendProgramChange(uint8_t prog_num, uint8_t channel) override;
     bool sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) override;
+    bool sendPitchBend(uint16_t value, uint8_t channel) override;
     bool sendSongPositionPointer(uint16_t beats) override;
     bool sendSongSelect(uint8_t song) override;
     bool sendStart() override;

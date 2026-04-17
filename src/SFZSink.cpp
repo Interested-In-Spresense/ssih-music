@@ -6,6 +6,8 @@
 
 #if defined(ARDUINO_ARCH_SPRESENSE) && !defined(SUBCORE)
 
+#include <math.h>
+
 #include "SFZSink.h"
 
 #include <errno.h>
@@ -197,6 +199,30 @@ static bool parseQ16(const String& str, uint32_t* out) {
     return true;
 }
 
+static bool parseBendRange(const String& str, uint32_t* out) {
+    int32_t value = 0;
+    if (!parseInt32(str, &value)) {
+        return false;
+    }
+    if (value < -9600 || value > 9600) {
+        return false;
+    }
+    *out = (uint32_t)value;
+    return true;
+}
+
+static bool parseBendFilter(const String& str, uint32_t* out) {
+    int32_t value = 0;
+    if (!parseInt32(str, &value)) {
+        return false;
+    }
+    if (value < -8192 || value > 8192) {
+        return false;
+    }
+    *out = (uint32_t)value;
+    return true;
+}
+
 static bool parseNotename(const String& str, uint32_t* out) {
     const unsigned char kBasenote[] = {69, 71, 60, 62, 64, 65, 67};
 
@@ -282,6 +308,10 @@ static SFZSink::Region buildRegion(const SFZSink::OpcodeContainer& container) {
     region.hicc0 = container.opcode[SFZSink::kOpcodeHiCC0];
     region.locc32 = container.opcode[SFZSink::kOpcodeLoCC32];
     region.hicc32 = container.opcode[SFZSink::kOpcodeHiCC32];
+    region.bend_up = (int32_t)container.opcode[SFZSink::kOpcodeBendUp];
+    region.bend_down = (int32_t)container.opcode[SFZSink::kOpcodeBendDown];
+    region.lobend = (int32_t)container.opcode[SFZSink::kOpcodeLoBend];
+    region.hibend = (int32_t)container.opcode[SFZSink::kOpcodeHiBend];
     size_t offset_samples = (pcm_samples < container.opcode[SFZSink::kOpcodeOffset]) ? pcm_samples : container.opcode[SFZSink::kOpcodeOffset];
     region.offset = region.pcm_offset + offset_samples * kSampleSize;
     if (pcm_samples > 0) {
@@ -338,8 +368,12 @@ SFZSink::SFZSink(const String& sfz_path)
       default_path_(""),
       sw_lokey_(NOTE_NUMBER_MIN),
       sw_hikey_(NOTE_NUMBER_MAX),
-    sw_last_(INVALID_NOTE_NUMBER),
-    seq_counters_() {
+      sw_last_(INVALID_NOTE_NUMBER),
+      pitch_bend_(),
+      seq_counters_() {
+        for (size_t i = 0; i < sizeof(pitch_bend_) / sizeof(pitch_bend_[0]); i++) {
+                pitch_bend_[i] = 8192;
+        }
 }
 
 SFZSink::~SFZSink() {
@@ -491,6 +525,10 @@ bool SFZSink::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) {
 
     Region* region = nullptr;
     uint32_t rand_q16 = generateRandQ16();
+    int32_t pitch_bend = 0;
+    if (1 <= channel && channel <= 16) {
+        pitch_bend = (int32_t)pitch_bend_[channel - 1] - 8192;
+    }
     std::vector<uint32_t> sequence_groups;
     for (auto& e : regions_) {
         if (e.sw_last != INVALID_NOTE_NUMBER && e.sw_last != sw_last_) {
@@ -515,6 +553,9 @@ bool SFZSink::sendNoteOn(uint8_t note, uint8_t velocity, uint8_t channel) {
             continue;
         }
         if (prog_num_ < e.loprog || e.hiprog < prog_num_) {
+            continue;
+        }
+        if (pitch_bend < e.lobend || e.hibend < pitch_bend) {
             continue;
         }
 
@@ -569,6 +610,17 @@ bool SFZSink::sendProgramChange(uint8_t prog_num, uint8_t /*channel*/) {
                  prog_num                                                // prog
     );
     prog_num_ = prog_num;
+    return true;
+}
+
+bool SFZSink::sendPitchBend(uint16_t value, uint8_t channel) {
+    if (channel < 1 || 16 < channel) {
+        return false;
+    }
+    if (value > 16383) {
+        value = 16383;
+    }
+    pitch_bend_[channel - 1] = value;
     return true;
 }
 
@@ -632,6 +684,10 @@ void SFZSink::startSfz() {
         global_.opcode[kOpcodeHiCC0] = 127;
         global_.opcode[kOpcodeLoCC32] = 0;
         global_.opcode[kOpcodeHiCC32] = 127;
+        global_.opcode[kOpcodeBendUp] = 200;
+        global_.opcode[kOpcodeBendDown] = (uint32_t)-200;
+        global_.opcode[kOpcodeLoBend] = (uint32_t)-8192;
+        global_.opcode[kOpcodeHiBend] = 8192;
     }
     group_ = global_;
     region_ = group_;
@@ -640,6 +696,9 @@ void SFZSink::startSfz() {
     sw_lokey_ = NOTE_NUMBER_MIN;
     sw_hikey_ = NOTE_NUMBER_MAX;
     sw_last_ = INVALID_NOTE_NUMBER;
+    for (size_t i = 0; i < sizeof(pitch_bend_) / sizeof(pitch_bend_[0]); i++) {
+        pitch_bend_[i] = 8192;
+    }
     seq_counters_.clear();
     header_ = kInvalidHeader;
     group_id_ = 0;
@@ -755,7 +814,11 @@ void SFZSink::opcode(const String& opcode, const String& value) {
         {"locc0",        kOpcodeLoCC0,       0,               127,             parseUint32  },
         {"hicc0",        kOpcodeHiCC0,       0,               127,             parseUint32  },
         {"locc32",       kOpcodeLoCC32,      0,               127,             parseUint32  },
-        {"hicc32",       kOpcodeHiCC32,      0,               127,             parseUint32  }
+        {"hicc32",       kOpcodeHiCC32,      0,               127,             parseUint32  },
+        {"bend_up",      kOpcodeBendUp,      0,               UINT32_MAX,      parseBendRange},
+        {"bend_down",    kOpcodeBendDown,    0,               UINT32_MAX,      parseBendRange},
+        {"lobend",       kOpcodeLoBend,      0,               UINT32_MAX,      parseBendFilter},
+        {"hibend",       kOpcodeHiBend,      0,               UINT32_MAX,      parseBendFilter}
     };
     // clang-format on
 
@@ -811,6 +874,7 @@ void SFZSink::opcode(const String& opcode, const String& value) {
 
 SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t velocity, uint8_t channel, Region* region) {
     trace_printf("[%s::%s] (%d,%d,%d,%p))\n", kClassName, __func__, note, velocity, channel, region);
+    const size_t kFrameBytes = (kPbBitDepth / 8) * kPbChannelCount;
     PlaybackUnit* unit = nullptr;
     if (region == nullptr) {
         error_printf("[%s::%s] error: region is null\n", kClassName, __func__);
@@ -838,6 +902,7 @@ SFZSink::PlaybackUnit* SFZSink::startPlayback(uint8_t note, uint8_t velocity, ui
         unit->render_ch = (render_channel < 0) ? kUnallocatedChannel : render_channel;
         unit->region = region;
         unit->loop = 0;
+        unit->source_frame = (double)(region->offset / kFrameBytes);
 
         if (unit->render_ch == kUnallocatedChannel) {
             error_printf("[%s::%s] cannot allocate channel\n", kClassName, __func__);
@@ -857,52 +922,117 @@ void SFZSink::continuePlayback(PlaybackUnit* unit, int frames) {
     if (unit->render_ch < 0) {
         return;
     }
+    const size_t kFrameBytes = (kPbBitDepth / 8) * kPbChannelCount;
+    const size_t kOutputFrames = kPbSampleCount;
+    const double region_end_frame = (double)(unit->region->end / kFrameBytes);
+    const double loop_start_frame = (double)(unit->region->loop_start / kFrameBytes);
+    const double loop_end_frame = (double)(unit->region->loop_end / kFrameBytes);
     for (int i = 0; i < frames; i++) {
-        // end of pcm
-        if (unit->region->loop_mode == kNoLoop) {
-            if (unit->file.position() >= unit->region->end) {
-                debug_printf("[%s::%s] no_loop end\n", kClassName, __func__);
-                stopPlayback(unit);
-                break;
-            }
-        } else {
-            if (unit->file.position() >= unit->region->loop_end) {
-                unit->loop++;
-                unit->file.seek(unit->region->loop_start);
-            }
-        }
-
-        // one_shot
-        if (unit->region->loop_mode == kOneShot) {
-            if (unit->loop >= unit->region->count) {
-                debug_printf("[%s::%s] one_shot end\n", kClassName, __func__);
-                stopPlayback(unit);
-                break;
-            }
-        }
-
-        // output PCM
         if (renderer_.getWritableSize(unit->render_ch) < kPbBlockSize) {
             break;
         }
         trace_printf("[%s::%s] %d %d,%d\n", kClassName, __func__, unit->render_ch, (int)renderer_.getReadableSize(unit->render_ch),
                      (int)renderer_.getWritableSize(unit->render_ch));
-        size_t read_size = unit->region->loop_end - unit->file.position();
-        read_size = (read_size < kPbBlockSize) ? read_size : kPbBlockSize;
-        uint8_t buffer[read_size];
-        unit->file.read(buffer, read_size);
+        uint8_t buffer[kPbBlockSize];
+        memset(buffer, 0x00, sizeof(buffer));
 
-        // Apply velocity-based amplitude coefficient to PCM data
-        if (unit->velocity > 0 && read_size > 0) {
-            for (size_t i = 0; i < read_size; i += 2) {
-                int16_t sample = (buffer[i+1] << 8) | buffer[i];
-                sample = (sample * (uint32_t)unit->velocity) / 127;
-                buffer[i] = sample & 0xFF;
-                buffer[i+1] = (sample >> 8) & 0xFF;
+        int32_t bend_raw = 0;
+        if (1 <= unit->channel && unit->channel <= 16) {
+            bend_raw = (int32_t)pitch_bend_[unit->channel - 1] - 8192;
+        }
+        int32_t bend_range = (bend_raw >= 0) ? abs(unit->region->bend_up) : abs(unit->region->bend_down);
+        double bend_cents = ((double)bend_raw / 8192.0) * (double)bend_range;
+        double ratio = pow(2.0, bend_cents / 1200.0);
+
+        size_t out_frames = 0;
+        while (out_frames < kOutputFrames) {
+            double limit_frame = (unit->region->loop_mode == kNoLoop) ? region_end_frame : loop_end_frame;
+            if (unit->source_frame >= limit_frame) {
+                if (unit->region->loop_mode == kNoLoop) {
+                    debug_printf("[%s::%s] no_loop end\n", kClassName, __func__);
+                    stopPlayback(unit);
+                    break;
+                }
+
+                unit->loop++;
+                if (unit->region->loop_mode == kOneShot && unit->loop >= unit->region->count) {
+                    debug_printf("[%s::%s] one_shot end\n", kClassName, __func__);
+                    stopPlayback(unit);
+                    break;
+                }
+                unit->source_frame = loop_start_frame;
+                continue;
             }
+
+            size_t remain_out = kOutputFrames - out_frames;
+            double remain_source = limit_frame - unit->source_frame;
+            size_t chunk_frames = remain_out;
+            if (remain_source > 0.0) {
+                size_t frames_until_limit = (size_t)(remain_source / ratio);
+                if (frames_until_limit == 0) {
+                    frames_until_limit = 1;
+                }
+                if (chunk_frames > frames_until_limit) {
+                    chunk_frames = frames_until_limit;
+                }
+            }
+
+            size_t base_frame = (size_t)unit->source_frame;
+            double base_frac = unit->source_frame - (double)base_frame;
+            double max_pos = base_frac + ((double)(chunk_frames - 1) * ratio);
+            size_t needed_frames = (size_t)max_pos + 2;
+            size_t available_frames = (size_t)limit_frame - base_frame;
+            if (available_frames == 0) {
+                available_frames = 1;
+            }
+            if (needed_frames > available_frames) {
+                needed_frames = available_frames;
+            }
+
+            std::vector<uint8_t> src_buffer(needed_frames * kFrameBytes, 0);
+            unit->file.seek(base_frame * kFrameBytes);
+            unit->file.read(src_buffer.data(), src_buffer.size());
+
+            for (size_t frame_index = 0; frame_index < chunk_frames; frame_index++) {
+                double pos = base_frac + ((double)frame_index * ratio);
+                size_t idx0 = (size_t)pos;
+                double frac = pos - (double)idx0;
+                size_t idx1 = idx0 + 1;
+                if (idx0 >= needed_frames) {
+                    idx0 = needed_frames - 1;
+                }
+                if (idx1 >= needed_frames) {
+                    idx1 = needed_frames - 1;
+                }
+
+                const uint8_t* p0 = &src_buffer[idx0 * kFrameBytes];
+                const uint8_t* p1 = &src_buffer[idx1 * kFrameBytes];
+                int16_t l0 = (int16_t)((p0[1] << 8) | p0[0]);
+                int16_t r0 = (int16_t)((p0[3] << 8) | p0[2]);
+                int16_t l1 = (int16_t)((p1[1] << 8) | p1[0]);
+                int16_t r1 = (int16_t)((p1[3] << 8) | p1[2]);
+
+                int32_t left = (int32_t)((1.0 - frac) * l0 + frac * l1);
+                int32_t right = (int32_t)((1.0 - frac) * r0 + frac * r1);
+
+                left = (left * (uint32_t)unit->velocity) / 127;
+                right = (right * (uint32_t)unit->velocity) / 127;
+
+                size_t dst = (out_frames + frame_index) * kFrameBytes;
+                buffer[dst + 0] = left & 0xFF;
+                buffer[dst + 1] = (left >> 8) & 0xFF;
+                buffer[dst + 2] = right & 0xFF;
+                buffer[dst + 3] = (right >> 8) & 0xFF;
+            }
+
+            unit->source_frame += (double)chunk_frames * ratio;
+            out_frames += chunk_frames;
         }
 
-        renderer_.write(unit->render_ch, buffer, read_size);
+        if (unit->render_ch < 0 || out_frames == 0) {
+            break;
+        }
+        renderer_.write(unit->render_ch, buffer, out_frames * kFrameBytes);
     }
 }
 

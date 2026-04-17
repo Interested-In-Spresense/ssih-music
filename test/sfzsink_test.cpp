@@ -2013,6 +2013,79 @@ TEST_F(SfzTest, seq_length_position_runtime_filter) {
     EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));  // step3: seq=3
 }
 
+TEST_F(SfzTest, pitch_bend_parse) {
+    create_file("testdata/SFZSink/pitch_bend_parse.sfz",
+                "<region> sample=test.raw bend_up=300 bend_down=-400 lobend=-100 hibend=200\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_parse.sfz");
+    sfz_test.begin();
+
+    EXPECT_EQ(sfz_test.getNumberOfRegions(), 1);
+    if (sfz_test.getNumberOfRegions() >= 1) {
+        EXPECT_EQ(sfz_test.getRegion(0)->bend_up, 300);
+        EXPECT_EQ(sfz_test.getRegion(0)->bend_down, -400);
+        EXPECT_EQ(sfz_test.getRegion(0)->lobend, -100);
+        EXPECT_EQ(sfz_test.getRegion(0)->hibend, 200);
+    }
+}
+
+TEST_F(SfzTest, pitch_bend_runtime_filter) {
+    create_file("testdata/SFZSink/pitch_bend_runtime_filter.sfz",
+                "<region> sample=test.raw key=60 lobend=100 hibend=8192\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_runtime_filter.sfz");
+    sfz_test.begin();
+
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));
+    EXPECT_TRUE(sfz_test.sendPitchBend(16383, 1));
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
+TEST_F(SfzTest, pitch_bend_default_filter_allows_center) {
+    create_file("testdata/SFZSink/pitch_bend_default_filter_allows_center.sfz",
+                "<region> sample=test.raw key=60\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_default_filter_allows_center.sfz");
+    sfz_test.begin();
+
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
+TEST_F(SfzTest, pitch_bend_runtime_filter_downward) {
+    create_file("testdata/SFZSink/pitch_bend_runtime_filter_downward.sfz",
+                "<region> sample=test.raw key=60 lobend=-8192 hibend=-100\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_runtime_filter_downward.sfz");
+    sfz_test.begin();
+
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));
+    EXPECT_TRUE(sfz_test.sendPitchBend(0, 1));
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
+TEST_F(SfzTest, pitch_bend_runtime_filter_center_is_excluded) {
+    create_file("testdata/SFZSink/pitch_bend_runtime_filter_center_is_excluded.sfz",
+                "<region> sample=test.raw key=60 lobend=1 hibend=8192\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_runtime_filter_center_is_excluded.sfz");
+    sfz_test.begin();
+
+    EXPECT_TRUE(sfz_test.sendPitchBend(8192, 1));
+    EXPECT_FALSE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
+TEST_F(SfzTest, pitch_bend_midi_message_runtime_filter) {
+    create_file("testdata/SFZSink/pitch_bend_midi_message_runtime_filter.sfz",
+                "<region> sample=test.raw key=60 lobend=100 hibend=8192\n"
+                "");
+    SFZSink sfz_test = SFZSink("testdata/SFZSink/pitch_bend_midi_message_runtime_filter.sfz");
+    sfz_test.begin();
+
+    uint8_t msg[] = {0xE0, 0x7F, 0x7F};
+    EXPECT_TRUE(sfz_test.sendMidiMessage(msg, sizeof(msg)));
+    EXPECT_TRUE(sfz_test.sendNoteOn(60, 100, 1));
+}
+
 TEST_F(SfzTest, velocity_max) {
     create_file("testdata/SFZSink/velocity_max.sfz",
                 "<region> sample=test.raw key=60 lovel=0 hivel=127\n"

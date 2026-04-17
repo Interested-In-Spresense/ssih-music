@@ -240,6 +240,8 @@ bool ScoreSrc::executeMidiEvent(const ScoreParser::MidiMessage& msg) {
         return sendControlChange(msg.data_byte1, msg.data_byte2, (status_byte & 0x0F) + 1);
     } else if ((status_byte & 0xF0) == MIDI_MSG_PROGRAM_CHANGE) {
         return sendProgramChange(msg.data_byte1, (status_byte & 0x0F) + 1);
+    } else if ((status_byte & 0xF0) == MIDI_MSG_PITCH_BEND_CHANGE) {
+        return sendPitchBend(((msg.data_byte2 & 0x7F) << 7) | ((msg.data_byte1 & 0x7F) << 0), (status_byte & 0x0F) + 1);
     } else if (status_byte == MIDI_MSG_META_EVENT) {
         if (msg.event_code == MIDI_META_SET_TEMPO) {
             uint32_t tempo = 0;
